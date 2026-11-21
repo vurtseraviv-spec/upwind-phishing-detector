@@ -1,0 +1,11 @@
+From: "PayPal Security Team" <support@paypa1-verification.xyz>
+Reply-To: harvest@evil-domain.ru
+Subject: URGENT: YOUR ACCOUNT HAS BEEN SUSPENDED
+Authentication-Results: mx.example.com; spf=fail; dkim=fail
+Attachment: invoice_details.pdf.exe
+
+Dear Customer,
+Your account has been suspended due to unusual sign-in activity.
+You must verify your account within 24 hours or it will be terminated.
+Click here immediately: http://185.220.101.4/paypal/login
+Backup link: https://bit.ly/3fakeLink

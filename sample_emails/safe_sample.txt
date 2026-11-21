@@ -1,0 +1,7 @@
+From: "GitHub Updates" <updates@github.com>
+Subject: Weekly digest for your repository
+Authentication-Results: mx.example.com; spf=pass; dkim=pass
+
+Hi,
+Here is your weekly summary of pull requests and issues.
+View details at https://github.com/notifications

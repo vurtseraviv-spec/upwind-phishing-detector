@@ -1,0 +1,93 @@
+#!/bin/bash
+set -euxo pipefail
+
+dnf update -y
+dnf install -y python3.11 python3.11-pip unzip amazon-cloudwatch-agent
+
+mkdir -p /opt/phishing-detector/app /var/log/phishing-detector
+aws s3 cp "s3://${s3_bucket}/app_bundle.zip" /tmp/app_bundle.zip --region "${aws_region}"
+unzip -o /tmp/app_bundle.zip -d /opt/phishing-detector/app
+
+cd /opt/phishing-detector
+python3.11 -m venv venv
+./venv/bin/pip install --upgrade pip
+./venv/bin/pip install -r /opt/phishing-detector/app/requirements.txt
+
+DB_PASS=$(aws ssm get-parameter --name "${db_password_param}" --with-decryption --region "${aws_region}" --query "Parameter.Value" --output text)
+GEMINI_KEY=$(aws ssm get-parameter --name "${gemini_key_param}" --with-decryption --region "${aws_region}" --query "Parameter.Value" --output text || echo "NONE")
+if [ "$GEMINI_KEY" = "NONE" ]; then
+  GEMINI_KEY=""
+fi
+
+cat <<EOF > /etc/phishing-detector.env
+DATABASE_URL=postgresql://${db_user}:$${DB_PASS}@${db_endpoint}/${db_name}
+REDIS_HOST=${redis_host}
+REDIS_PORT=6379
+GEMINI_API_KEY=$${GEMINI_KEY}
+LOG_FILE=/var/log/phishing-detector/app.log
+EOF
+chmod 600 /etc/phishing-detector.env
+
+cat <<'EOF' > /etc/systemd/system/phishing-detector.service
+[Unit]
+Description=PhishGuard AI Email Phishing Detector FastAPI App
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/phishing-detector
+EnvironmentFile=/etc/phishing-detector.env
+ExecStart=/opt/phishing-detector/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now phishing-detector
+
+cat <<'EOF' > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "root"
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/phishing-detector/app.log",
+            "log_group_name": "${log_group_name}",
+            "log_stream_name": "{instance_id}-app",
+            "retention_in_days": 7
+          }
+        ]
+      }
+    }
+  },
+  "metrics": {
+    "namespace": "PhishingDetector/EC2",
+    "append_dimensions": {
+      "AutoScalingGroupName": "$${aws:AutoScalingGroupName}",
+      "InstanceId": "$${aws:InstanceId}"
+    },
+    "aggregation_dimensions": [["AutoScalingGroupName"]],
+    "metrics_collected": {
+      "mem": {
+        "measurement": ["mem_used_percent"]
+      },
+      "disk": {
+        "measurement": ["used_percent"],
+        "resources": ["/"]
+      }
+    }
+  }
+}
+EOF
+
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 -s \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
